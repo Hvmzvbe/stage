@@ -1,49 +1,49 @@
-name: MLOps ISO8583 Pipeline
+# name: MLOps ISO8583 Pipeline
 
-on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main ]
+# on:
+#   push:
+#     branches: [ main, develop ]
+#   pull_request:
+#     branches: [ main ]
 
-jobs:
-  quality-and-test:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+# jobs:
+#   quality-and-test:
+#     runs-on: ubuntu-latest
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v3
 
-      - name: Set up Python 3.9
-        uses: actions/core/setup-python@v4
-        with:
-          python-version: '3.9'
+#       - name: Set up Python 3.9
+#         uses: actions/core/setup-python@v4
+#         with:
+#           python-version: '3.9'
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install flake8 pytest
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+#       - name: Install dependencies
+#         run: |
+#           python -m pip install --upgrade pip
+#           pip install flake8 pytest
+#           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Lint with flake8
-        run: |
-          # Arrête le build s'il y a des erreurs de syntaxe Python ou des variables non définies
-          flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+#       - name: Lint with flake8
+#         run: |
+#           # Arrête le build s'il y a des erreurs de syntaxe Python ou des variables non définies
+#           flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
 
-      - name: Run Unit Tests
-        run: |
-          # Lance les tests (ex: validation de votre parser ISO 8583)
-          pytest
+#       - name: Run Unit Tests
+#         run: |
+#           # Lance les tests (ex: validation de votre parser ISO 8583)
+#           pytest
 
-  build-docker:
-    needs: quality-and-test
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
+#   build-docker:
+#     needs: quality-and-test
+#     runs-on: ubuntu-latest
+#     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+#     steps:
+#       - name: Checkout code
+#         uses: actions/checkout@v3
 
-      - name: Build Docker Image
-        run: |
-          docker build -t detection-anomalie-api:${{ github.sha }} .
+#       - name: Build Docker Image
+#         run: |
+#           docker build -t detection-anomalie-api:${{ github.sha }} .
           
      
