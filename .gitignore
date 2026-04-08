@@ -1,2 +1,15 @@
 # data
 data/
+
+# Environnement virtuel
+venv/
+.venv/
+env/
+
+# Cache Python
+__pycache__/
+*.pyc
+
+# IDE (VS Code / PyCharm)
+.vscode/
+.idea/

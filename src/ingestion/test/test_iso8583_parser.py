@@ -8,9 +8,10 @@
 """
 
 import json
+import iso8583
 import pytest
-import pyiso8583
-import pyiso8583.specs
+#from iso8583 import encode, decode
+#from iso8583.specs import default_spec
 
 from iso8583_parser import UniversalISO8583Parser, DE_FIELD_MAPPING, MTI_DESCRIPTIONS
 
@@ -23,7 +24,7 @@ def build_test_frame(mti: str, fields: dict) -> bytes:
     """Helper : construit une trame ISO 8583 valide pour les tests."""
     doc = {"t": mti}
     doc.update(fields)
-    raw, _ = pyiso8583.encode(doc, spec=pyiso8583.specs.default_ascii)
+    raw, _ = iso8583.encode(doc, spec=iso8583.specs.default_ascii)
     return raw
 
 
@@ -153,7 +154,7 @@ class TestFrameDecoding:
             parser.parse_frame(b"")
 
     def test_invalid_frame_raises_decode_error(self, parser):
-        with pytest.raises((pyiso8583.DecodeError, Exception)):
+        with pytest.raises((iso8583.DecodeError, Exception)):
             parser.parse_frame(b"INVALID_ISO8583_GARBAGE_DATA_1234567890")
 
     def test_metadata_block_present(self, parser, standard_auth_frame):

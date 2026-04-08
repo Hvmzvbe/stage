@@ -1,11 +1,5 @@
 """
 ================================================================================
- Al Barid Bank — Plateforme MLOps Détection de Fraude
- Module : ISO 8583 Universal Parser (Bloc Ingestion Layer)
- Auteur : PFE Hamza — EMSI 5ème Année
- Version : 1.0.0
-================================================================================
-
  Description :
    Script de décodage universel des trames ISO 8583 reçues via Kafka.
    Transforme chaque message binaire/ASCII en JSON structuré, prêt pour
@@ -15,7 +9,7 @@
    [iso8583_raw] → UniversalISO8583Parser → [iso8583_cleaned] | [quarantine_zone]
 
  Dépendances :
-   pip install pyiso8583 confluent-kafka python-dotenv
+   pip install pyiso8583==3.0.0 confluent-kafka==2.4.0 python-dotenv==1.0.1
 
 ================================================================================
 """
@@ -28,13 +22,23 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
-import pyiso8583
-import pyiso8583.specs
-from confluent_kafka import Consumer, KafkaError, KafkaException, Producer
+
+import iso8583
+#from iso8583 import encode, decode
+#from iso8583.specs import default_spec 
+
+# Optional: Kafka (peut être désactivé pour tests locaux)
+try:
+    from confluent_kafka import Consumer, KafkaError, KafkaException, Producer
+    KAFKA_AVAILABLE = True
+except ImportError:
+    KAFKA_AVAILABLE = False
+    logging.warning("⚠️  confluent-kafka non installé — mode Kafka désactivé")
+
 from dotenv import load_dotenv
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CONFIGURATION LOGGING — Format structuré JSON-like pour intégration Grafana
+# CONFIGURATION LOGGING
 # ─────────────────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
@@ -42,15 +46,13 @@ logging.basicConfig(
     datefmt="%Y-%m-%dT%H:%M:%S",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("/tmp/iso8583_parser.log", encoding="utf-8"),
+        logging.FileHandler("iso8583_parser.log", encoding="utf-8"),
     ],
 )
 logger = logging.getLogger("ISO8583Parser")
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MAPPING DES DATA ELEMENTS ISO 8583
-# Source : ISO 8583:1993 + extensions Al Barid Bank
-# Facilite le Feature Engineering en ajoutant le nom sémantique de chaque champ
 # ─────────────────────────────────────────────────────────────────────────────
 DE_FIELD_MAPPING: dict[int, dict[str, str]] = {
     1:   {"name": "Secondary Bitmap",          "category": "bitmap"},
@@ -104,8 +106,7 @@ DE_FIELD_MAPPING: dict[int, dict[str, str]] = {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CLASSIFICATION MTI — Message Type Indicator
-# Permet d'enrichir le JSON avec le type de transaction dès l'ingestion
+# CLASSIFICATION MTI
 # ─────────────────────────────────────────────────────────────────────────────
 MTI_DESCRIPTIONS: dict[str, str] = {
     "0100": "Authorization Request",
@@ -135,23 +136,12 @@ MTI_DESCRIPTIONS: dict[str, str] = {
 class UniversalISO8583Parser:
     """
     Parser universel pour les trames ISO 8583 (ASCII/BCD).
-
-    Responsabilités :
-    - Décoder dynamiquement toute trame ISO 8583 (DE 1 à 128)
-    - Enrichir le JSON avec les métadonnées sémantiques (nom du champ, catégorie)
-    - Router vers iso8583_cleaned (succès) ou quarantine_zone (erreur)
-    - Maintenir des métriques de processing pour Prometheus/Grafana
+    Compatible pyiso8583 3.0.0+
     """
 
-    def __init__(self, spec: dict | None = None):
-        """
-        Initialise le parser avec la spécification ISO 8583.
-
-        Args:
-            spec: Dictionnaire de spécification pyiso8583.
-                  Défaut : ASCII spec (compatible réseau monétique marocain).
-        """
-        self.spec = spec or pyiso8583.specs.default_ascii
+    def __init__(self):
+        """Initialise le parser avec la spécification ISO 8583."""
+        self.spec = iso8583.specs.default_spec
         self._metrics = {
             "total_processed": 0,
             "total_success": 0,
@@ -159,8 +149,7 @@ class UniversalISO8583Parser:
             "total_errors": 0,
             "start_time": time.time(),
         }
-        logger.info("UniversalISO8583Parser initialisé avec spec: %s",
-                    type(self.spec).__name__)
+        logger.info("✓ UniversalISO8583Parser initialisé avec pyiso8583 3.0.0")
 
     # ─────────────────────────────────────────────────────────────────────────
     # MÉTHODE PRINCIPALE : parse_frame
@@ -169,29 +158,25 @@ class UniversalISO8583Parser:
         """
         Décode une trame ISO 8583 brute en JSON structuré.
 
-        Pipeline interne :
-          1. Décodage pyiso8583 (MTI + Bitmap + tous les DEs présents)
-          2. Enrichissement sémantique (noms, catégories, flags de fraude)
-          3. Ajout de métadonnées de traitement (timestamp, version)
-
         Args:
             raw_frame: La trame ISO 8583 brute en bytes.
 
         Returns:
-            Dictionnaire Python complet (sérialisable en JSON).
+            Dictionnaire Python (sérialisable en JSON).
 
         Raises:
-            ValueError: Si la trame est vide ou incohérente.
-            pyiso8583.DecodeError: Si le décodage échoue.
+            ValueError: Si la trame est vide.
+            Exception: Si le décodage échoue.
         """
         if not raw_frame:
             raise ValueError("Trame vide reçue — message ignoré")
 
-        # ── 1. DÉCODAGE PYISO8583 ──────────────────────────────────────────
-        # pyiso8583.decode retourne (doc, raw_doc)
-        # doc = dictionnaire des champs décodés
-        # raw_doc = les valeurs brutes avant interprétation
-        doc, raw_doc = pyiso8583.decode(raw_frame, spec=self.spec)
+        # ── 1. DÉCODAGE PYISO8583 (v3.0.0) ─────────────────────────────────
+        # decode() retourne un dictionnaire avec tous les DEs
+        try:
+            doc = iso8583.decode(raw_frame, spec=self.spec)
+        except Exception as e:
+            raise ValueError(f"Erreur décodage ISO 8583 : {e}") from e
 
         # ── 2. EXTRACTION DU MTI ──────────────────────────────────────────
         mti = doc.get("t", "UNKNOWN")
@@ -199,34 +184,25 @@ class UniversalISO8583Parser:
 
         # ── 3. CONSTRUCTION DU JSON ENRICHI ──────────────────────────────
         parsed_message: dict[str, Any] = {
-            # Métadonnées de traitement
             "_metadata": {
                 "parser_version": "1.0.0",
                 "parsed_at": datetime.now(timezone.utc).isoformat(),
                 "source_topic": "iso8583_raw",
                 "raw_length_bytes": len(raw_frame),
                 "spec_used": "ASCII",
+                "pyiso8583_version": "3.0.0",
             },
-            # Informations MTI
             "MTI": mti,
             "MTI_description": mti_description,
             "transaction_type": self._classify_transaction(mti),
-            # Bitmap info (pour debug et audit)
-            "bitmap_info": {
-                "primary_bitmap_hex": raw_doc.get("p", b"").hex(),
-                "secondary_bitmap_present": "1" in doc,
-            },
         }
 
-        # ── 4. EXTRACTION DE TOUS LES DATA ELEMENTS PRÉSENTS ─────────────
-        # pyiso8583 peuple le doc avec les clés "2" à "128" pour chaque
-        # DE présent dans le bitmap.
+        # ── 4. EXTRACTION DE TOUS LES DATA ELEMENTS ────────────────────
         de_fields: dict[str, Any] = {}
         active_de_numbers: list[int] = []
 
         for de_num_str, value in doc.items():
-            # Ignorer les clés internes de pyiso8583 (t=MTI, p=primary bitmap)
-            if de_num_str in ("t", "p"):
+            if de_num_str in ("t", "p"):  # Skip MTI and primary bitmap
                 continue
 
             try:
@@ -237,12 +213,11 @@ class UniversalISO8583Parser:
             active_de_numbers.append(de_num)
             de_key = f"DE_{de_num:03d}"
 
-            # Récupérer les métadonnées du champ depuis notre mapping
             field_meta = DE_FIELD_MAPPING.get(de_num, {})
             field_name = field_meta.get("name", f"Field {de_num}")
             field_category = field_meta.get("category", "unknown")
 
-            # Masquer les données sensibles (PCI-DSS compliance)
+            # Masquer les données sensibles (PCI-DSS)
             display_value = self._mask_sensitive_field(de_num, str(value))
 
             de_fields[de_key] = {
@@ -256,119 +231,96 @@ class UniversalISO8583Parser:
         parsed_message["active_de_count"] = len(active_de_numbers)
         parsed_message["active_de_list"] = sorted(active_de_numbers)
 
-        # ── 5. EXTRACTION DES CHAMPS CRITIQUES POUR LE FEATURE ENGINEERING ─
-        # Accès direct aux champs les plus importants pour la fraude
+        # ── 5. EXTRACTION DES FEATURES ANTI-FRAUDE ──────────────────────
         parsed_message["fraud_features"] = self._extract_fraud_features(doc)
 
         return parsed_message
 
     # ─────────────────────────────────────────────────────────────────────────
-    # EXTRACTION DES FEATURES ANTI-FRAUDE (accès rapide)
+    # EXTRACTION DES FEATURES ANTI-FRAUDE
     # ─────────────────────────────────────────────────────────────────────────
     def _extract_fraud_features(self, doc: dict) -> dict[str, Any]:
-        """
-        Extrait et normalise les champs critiques pour la détection de fraude.
-        Ces champs correspondent directement aux règles métier définies dans
-        la spécification du projet.
-
-        Champs ISO 8583 utilisés :
-          - DE 4  → Montant (Amount)
-          - DE 7  → Date/Heure de transmission (pour Impossible Travel)
-          - DE 12 → Heure locale (pour Incohérence Heure/Commerce)
-          - DE 13 → Date locale
-          - DE 18 → MCC (Merchant Category Code — Incohérence commerce)
-          - DE 22 → POS Entry Mode (Card Present vs Not Present)
-          - DE 39 → Response Code (Card Testing — détection des refus)
-          - DE 41 → Terminal ID
-          - DE 43 → Localisation du terminal (Géographie / Impossible Travel)
-          - DE 49 → Devise (Currency Code)
-        """
+        """Extrait les champs critiques pour la détection de fraude."""
         features: dict[str, Any] = {}
 
-        # Montant (DE 4) — converti en float (les 2 derniers chiffres = centimes)
+        # Montant (DE 4)
         if "4" in doc:
             try:
                 amount_str = str(doc["4"]).zfill(12)
                 features["amount_mad"] = float(amount_str) / 100.0
-                # Flag Card Testing : micro-montants ≤ 50 MAD
                 features["is_micro_amount"] = features["amount_mad"] <= 50.0
             except (ValueError, TypeError):
                 features["amount_mad"] = None
                 features["is_micro_amount"] = False
 
-        # Date/Heure de transmission (DE 7) — format MMDDhhmmss
+        # Date/Heure (DE 7)
         if "7" in doc:
             features["transmission_datetime_raw"] = str(doc["7"])
             features["transmission_datetime_iso"] = self._parse_iso8583_datetime(
                 str(doc["7"])
             )
 
-        # Heure locale (DE 12) — format hhmmss → pour détection heure anormale
+        # Heure locale (DE 12)
         if "12" in doc:
             try:
                 time_str = str(doc["12"]).zfill(6)
                 hour = int(time_str[:2])
                 features["local_hour"] = hour
-                # Flag : transaction entre 23h et 5h du matin
                 features["is_odd_hour"] = hour >= 23 or hour <= 5
             except (ValueError, TypeError):
                 features["local_hour"] = None
                 features["is_odd_hour"] = False
 
-        # Date locale (DE 13) — format MMDD
+        # Date locale (DE 13)
         if "13" in doc:
             features["local_date_raw"] = str(doc["13"])
 
-        # MCC — Merchant Category Code (DE 18)
+        # MCC (DE 18)
         if "18" in doc:
             mcc = str(doc["18"])
             features["mcc"] = mcc
             features["merchant_category"] = self._classify_mcc(mcc)
-            # Flag : commerces à risque élevé (bijouteries, casinos, crypto)
             features["is_high_risk_merchant"] = mcc in self._get_high_risk_mcc_list()
 
         # POS Entry Mode (DE 22)
         if "22" in doc:
             pos_mode = str(doc["22"])
             features["pos_entry_mode"] = pos_mode
-            # Distinction Card Present / Card Not Present (CNP = fraude plus facile)
             features["is_card_not_present"] = pos_mode[:2] in ("01", "10", "81", "82")
 
         # Response Code (DE 39)
         if "39" in doc:
             response_code = str(doc["39"])
             features["response_code"] = response_code
-            # Flag : transaction refusée (Card Testing : série de refus)
             features["is_declined"] = response_code not in ("00", "000", "0000", "10")
 
-        # Terminal ID (DE 41) — pour le profiling terminal
+        # Terminal ID (DE 41)
         if "41" in doc:
             features["terminal_id"] = str(doc["41"]).strip()
 
-        # Localisation terminal (DE 43) — format: NomCommerce    VilleCode
+        # Localisation (DE 43)
         if "43" in doc:
             location_raw = str(doc["43"])
             features["terminal_location_raw"] = location_raw
             parsed_location = self._parse_de43_location(location_raw)
             features.update(parsed_location)
 
-        # PAN masqué (DE 2) — pour le profiling client
+        # PAN masqué (DE 2)
         if "2" in doc:
             pan = str(doc["2"])
             features["pan_masked"] = self._mask_pan(pan)
-            features["pan_bin"] = pan[:6] if len(pan) >= 6 else pan  # BIN = 6 premiers
+            features["pan_bin"] = pan[:6] if len(pan) >= 6 else pan
 
-        # Currency Code (DE 49)
+        # Currency (DE 49)
         if "49" in doc:
             features["currency_code"] = str(doc["49"])
-            # Flag : devise étrangère pour un client habituel MAD
             features["is_foreign_currency"] = str(doc["49"]) != "504"  # 504 = MAD
 
-        # STAN (DE 11) — System Trace Audit Number
+        # STAN (DE 11)
         if "11" in doc:
             features["stan"] = str(doc["11"])
 
-        # RRN (DE 37) — Retrieval Reference Number
+        # RRN (DE 37)
         if "37" in doc:
             features["rrn"] = str(doc["37"])
 
@@ -389,10 +341,7 @@ class UniversalISO8583Parser:
         return mti_map.get(mti[:2], "Unknown")
 
     def _parse_iso8583_datetime(self, dt_str: str) -> str | None:
-        """
-        Convertit une date ISO 8583 (MMDDhhmmss) en ISO 8601.
-        Ajoute l'année courante car ISO 8583 ne la stocke pas dans DE 7.
-        """
+        """Convertit une date ISO 8583 (MMDDhhmmss) en ISO 8601."""
         try:
             current_year = datetime.now().year
             month = int(dt_str[0:2])
@@ -406,52 +355,43 @@ class UniversalISO8583Parser:
             return None
 
     def _parse_de43_location(self, location_raw: str) -> dict[str, str]:
-        """
-        Parse le champ DE 43 (Card Acceptor Name/Location).
-        Format standard : <NomCommerce (22)><Ville (13)><CodePays (2)>
-        """
+        """Parse le champ DE 43 (Card Acceptor Name/Location)."""
         result = {}
         try:
-            # Format fixe 40 caractères selon ISO 8583
             location_raw = location_raw.ljust(40)
             result["merchant_name"] = location_raw[:22].strip()
             result["merchant_city"] = location_raw[22:35].strip()
             result["merchant_country"] = location_raw[35:37].strip()
-        except Exception:  # noqa: BLE001
+        except Exception:
             result["merchant_name"] = location_raw.strip()
         return result
 
     def _classify_mcc(self, mcc: str) -> str:
         """Retourne la catégorie humaine d'un MCC."""
         mcc_categories = {
-            "5411": "Supermarché", "5812": "Restaurant", "5411": "Épicerie",
-            "5912": "Pharmacie", "5999": "Commerce divers", "6010": "Retrait bancaire",
-            "6011": "Distributeur ATM", "6012": "Institution financière",
-            "7011": "Hôtel / Hébergement", "7372": "Informatique / IT",
-            "5094": "Bijouterie / Pierres précieuses", "7995": "Jeux / Casino",
-            "6051": "Crypto / Non-financial institutions", "5912": "Pharmacie",
-            "4111": "Transport en commun", "4121": "Taxi", "4814": "Téléphonie",
-            "5310": "Discount Store", "5651": "Vêtements", "5732": "Électronique",
+            "5411": "Supermarché", "5812": "Restaurant", "5912": "Pharmacie",
+            "5999": "Commerce divers", "6010": "Retrait bancaire", "6011": "ATM",
+            "6012": "Institution financière", "7011": "Hôtel", "7372": "Informatique",
+            "5094": "Bijouterie", "7995": "Casino", "6051": "Crypto",
+            "4111": "Transport", "4121": "Taxi", "4814": "Téléphonie",
+            "5310": "Discount", "5651": "Vêtements", "5732": "Électronique",
         }
         return mcc_categories.get(mcc, f"Code MCC {mcc}")
 
     def _get_high_risk_mcc_list(self) -> set[str]:
-        """Retourne la liste des MCC à risque élevé de fraude."""
+        """Retourne les MCC à risque élevé."""
         return {
-            "5094",  # Bijouteries / Pierres précieuses
-            "7995",  # Jeux de hasard / Casinos
-            "6051",  # Crypto / Non-financial institutions
+            "5094",  # Bijouteries
+            "7995",  # Casinos
+            "6051",  # Crypto
             "6012",  # Money services
-            "5912",  # Pharmacies (abus fréquents)
+            "5912",  # Pharmacies
             "4829",  # Wire transfers
             "6540",  # Prepaid cards
         }
 
     def _mask_sensitive_field(self, de_num: int, value: str) -> str:
-        """
-        Masque les données sensibles selon PCI-DSS.
-        DE 2 (PAN), DE 35 (Track 2), DE 45 (Track 1), DE 52 (PIN) sont masqués.
-        """
+        """Masque les données sensibles (PCI-DSS)."""
         sensitive_fields = {2, 35, 45, 52}
         if de_num in sensitive_fields:
             return self._mask_pan(value)
@@ -459,14 +399,14 @@ class UniversalISO8583Parser:
 
     @staticmethod
     def _mask_pan(pan: str) -> str:
-        """Masque un PAN selon PCI-DSS : conserve les 6 premiers et 4 derniers chiffres."""
+        """Masque un PAN selon PCI-DSS."""
         pan = pan.strip()
         if len(pan) >= 13:
             return f"{pan[:6]}{'*' * (len(pan) - 10)}{pan[-4:]}"
         return "*" * len(pan)
 
     def get_metrics(self) -> dict[str, Any]:
-        """Retourne les métriques de performance pour Prometheus."""
+        """Retourne les métriques de performance."""
         elapsed = time.time() - self._metrics["start_time"]
         tps = self._metrics["total_success"] / elapsed if elapsed > 0 else 0
         return {
@@ -482,196 +422,113 @@ class UniversalISO8583Parser:
 
 
 # =============================================================================
-# KAFKA WORKER — Boucle de consommation temps réel
+# KAFKA WORKER (Optionnel)
 # =============================================================================
-class KafkaISO8583Worker:
-    """
-    Worker Kafka pour la consommation continue du topic iso8583_raw.
+if KAFKA_AVAILABLE:
+    class KafkaISO8583Worker:
+        """Worker Kafka pour consommation continue du topic iso8583_raw."""
 
-    Gère le cycle complet :
-    1. Consommation depuis iso8583_raw
-    2. Décodage via UniversalISO8583Parser
-    3. Publication vers iso8583_cleaned ou quarantine_zone
-    4. Commit du offset (at-least-once delivery)
-    """
+        TOPIC_RAW = "iso8583_raw"
+        TOPIC_CLEANED = "iso8583_cleaned"
+        TOPIC_QUARANTINE = "quarantine_zone"
 
-    TOPIC_RAW = "iso8583_raw"
-    TOPIC_CLEANED = "iso8583_cleaned"
-    TOPIC_QUARANTINE = "quarantine_zone"
+        def __init__(self):
+            load_dotenv()
+            kafka_bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
+            kafka_group = os.getenv("KAFKA_CONSUMER_GROUP", "iso8583-parser-group")
 
-    def __init__(self):
-        load_dotenv()
+            consumer_config = {
+                "bootstrap.servers": kafka_bootstrap,
+                "group.id": kafka_group,
+                "auto.offset.reset": "earliest",
+                "enable.auto.commit": False,
+                "session.timeout.ms": 30000,
+            }
 
-        kafka_bootstrap = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "localhost:9092")
-        kafka_group = os.getenv("KAFKA_CONSUMER_GROUP", "iso8583-parser-group")
+            producer_config = {
+                "bootstrap.servers": kafka_bootstrap,
+                "acks": "all",
+                "retries": 5,
+                "compression.type": "snappy",
+            }
 
-        # Configuration Consumer
-        consumer_config = {
-            "bootstrap.servers": kafka_bootstrap,
-            "group.id": kafka_group,
-            "auto.offset.reset": "earliest",
-            "enable.auto.commit": False,        # Commit manuel pour fiabilité
-            "session.timeout.ms": 30000,
-            "max.poll.interval.ms": 300000,
-            "fetch.max.bytes": 52428800,        # 50 MB max par fetch
-        }
+            self.consumer = Consumer(consumer_config)
+            self.producer = Producer(producer_config)
+            self.parser = UniversalISO8583Parser()
 
-        # Configuration Producer
-        producer_config = {
-            "bootstrap.servers": kafka_bootstrap,
-            "acks": "all",                       # Durabilité maximale
-            "retries": 5,
-            "retry.backoff.ms": 500,
-            "compression.type": "snappy",        # Compression pour les gros volumes
-            "linger.ms": 5,                      # Micro-batching pour throughput
-        }
+            logger.info(f"✓ KafkaISO8583Worker initialisé | Bootstrap: {kafka_bootstrap}")
 
-        self.consumer = Consumer(consumer_config)
-        self.producer = Producer(producer_config)
-        self.parser = UniversalISO8583Parser()
+        def _delivery_callback(self, err, msg):
+            if err is not None:
+                logger.error(f"❌ Échec livraison : {err}")
+            else:
+                logger.debug(f"✓ Message livré")
 
-        logger.info(
-            "KafkaISO8583Worker initialisé | Bootstrap: %s | Group: %s",
-            kafka_bootstrap, kafka_group
-        )
+        def _publish(self, topic: str, payload: dict, key: str | None = None):
+            try:
+                message_bytes = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
+                self.producer.produce(
+                    topic=topic,
+                    value=message_bytes,
+                    key=key.encode("utf-8") if key else None,
+                    callback=self._delivery_callback,
+                )
+                self.producer.poll(0)
+            except Exception as e:
+                logger.critical(f"Impossible de publier : {e}")
+                raise
 
-    def _delivery_callback(self, err, msg):
-        """Callback de livraison pour le producer Kafka (logging des erreurs)."""
-        if err is not None:
-            logger.error("Échec livraison message | Topic: %s | Erreur: %s",
-                         msg.topic(), err)
-        else:
-            logger.debug("Message livré | Topic: %s | Partition: %d | Offset: %d",
-                         msg.topic(), msg.partition(), msg.offset())
+        def run(self):
+            """Boucle principale de consommation."""
+            self.consumer.subscribe([self.TOPIC_RAW])
+            logger.info(f"📡 Écoute du topic : {self.TOPIC_RAW}")
 
-    def _publish(self, topic: str, payload: dict, key: str | None = None):
-        """Sérialise et publie un dictionnaire JSON vers un topic Kafka."""
-        try:
-            message_bytes = json.dumps(payload, ensure_ascii=False, default=str).encode("utf-8")
-            self.producer.produce(
-                topic=topic,
-                value=message_bytes,
-                key=key.encode("utf-8") if key else None,
-                callback=self._delivery_callback,
-            )
-            self.producer.poll(0)  # Déclenche les callbacks en attente
-        except Exception as e:
-            logger.critical("Impossible de publier sur %s : %s", topic, e)
-            raise
+            try:
+                while True:
+                    msg = self.consumer.poll(timeout=1.0)
 
-    def run(self):
-        """
-        Boucle principale de consommation.
-        Traite les messages en continu jusqu'à interruption (Ctrl+C ou SIGTERM).
-        """
-        self.consumer.subscribe([self.TOPIC_RAW])
-        logger.info("Démarrage écoute topic: %s", self.TOPIC_RAW)
+                    if msg is None:
+                        continue
 
-        try:
-            while True:
-                # Poll avec timeout de 1 seconde (non-bloquant)
-                msg = self.consumer.poll(timeout=1.0)
+                    if msg.error():
+                        if msg.error().code() != KafkaError._PARTITION_EOF:
+                            raise KafkaException(msg.error())
+                        continue
 
-                if msg is None:
-                    # Aucun message — log des métriques toutes les ~60s
-                    continue
+                    self.parser._metrics["total_processed"] += 1
+                    raw_value = msg.value()
 
-                if msg.error():
-                    if msg.error().code() == KafkaError._PARTITION_EOF:
-                        # Fin de partition — normal en l'absence de nouveaux messages
-                        logger.debug("Fin de partition atteinte : %s [%d] @ %d",
-                                     msg.topic(), msg.partition(), msg.offset())
-                    else:
-                        raise KafkaException(msg.error())
-                    continue
+                    try:
+                        parsed = self.parser.parse_frame(raw_value)
+                        parsed["_metadata"]["kafka_partition"] = msg.partition()
+                        parsed["_metadata"]["kafka_offset"] = msg.offset()
 
-                # ── TRAITEMENT DU MESSAGE ──────────────────────────────────
-                self.parser._metrics["total_processed"] += 1
-                raw_value = msg.value()
-                message_key = msg.key().decode("utf-8") if msg.key() else None
+                        partition_key = parsed.get("fraud_features", {}).get("pan_masked")
+                        self._publish(self.TOPIC_CLEANED, parsed, key=partition_key)
 
-                try:
-                    # ── PARSING ISO 8583 ──────────────────────────────────
-                    parsed = self.parser.parse_frame(raw_value)
+                        self.parser._metrics["total_success"] += 1
+                        logger.info(f"✓ Parsed MTI: {parsed.get('MTI')}")
 
-                    # Enrichissement avec les métadonnées Kafka
-                    parsed["_metadata"]["kafka_partition"] = msg.partition()
-                    parsed["_metadata"]["kafka_offset"] = msg.offset()
-                    parsed["_metadata"]["kafka_timestamp"] = msg.timestamp()[1]
+                    except Exception as e:
+                        self.parser._metrics["total_quarantine"] += 1
+                        logger.warning(f"⚠️  QUARANTINE : {e}")
 
-                    # Publication vers le topic cleaned
-                    partition_key = parsed.get("fraud_features", {}).get("pan_masked", message_key)
-                    self._publish(self.TOPIC_CLEANED, parsed, key=partition_key)
+                    finally:
+                        self.consumer.commit(asynchronous=False)
 
-                    self.parser._metrics["total_success"] += 1
-                    logger.info(
-                        "✓ Parsed | MTI: %s | DEs actifs: %d | Montant: %s MAD | Partition: %d | Offset: %d",
-                        parsed.get("MTI"),
-                        parsed.get("active_de_count", 0),
-                        parsed.get("fraud_features", {}).get("amount_mad", "N/A"),
-                        msg.partition(),
-                        msg.offset(),
-                    )
+            except KeyboardInterrupt:
+                logger.info("Arrêt demandé")
+            finally:
+                self._shutdown()
 
-                except (pyiso8583.DecodeError, ValueError) as e:
-                    # ── QUARANTINE : Trame invalide ────────────────────────
-                    self.parser._metrics["total_quarantine"] += 1
-                    quarantine_payload = {
-                        "_metadata": {
-                            "quarantine_reason": str(e),
-                            "quarantine_at": datetime.now(timezone.utc).isoformat(),
-                            "kafka_partition": msg.partition(),
-                            "kafka_offset": msg.offset(),
-                            "raw_hex": raw_value.hex() if raw_value else "",
-                            "raw_length_bytes": len(raw_value) if raw_value else 0,
-                        },
-                        "error_type": type(e).__name__,
-                        "error_message": str(e),
-                    }
-                    self._publish(self.TOPIC_QUARANTINE, quarantine_payload)
-                    logger.warning(
-                        "⚠ QUARANTINE | Raison: %s | Offset: %d | Raw (hex, 50B): %s",
-                        e, msg.offset(), raw_value[:50].hex() if raw_value else ""
-                    )
-
-                except Exception as e:
-                    # ── ERREUR INATTENDUE ──────────────────────────────────
-                    self.parser._metrics["total_errors"] += 1
-                    logger.error(
-                        "✗ Erreur critique sur offset %d : %s",
-                        msg.offset(), e, exc_info=True
-                    )
-
-                finally:
-                    # Commit manuel — garantit "at-least-once" delivery
-                    self.consumer.commit(asynchronous=False)
-
-                # Log métriques toutes les 1000 transactions
-                if self.parser._metrics["total_processed"] % 1000 == 0:
-                    metrics = self.parser.get_metrics()
-                    logger.info("📊 Métriques | %s", json.dumps(metrics))
-
-        except KeyboardInterrupt:
-            logger.info("Arrêt demandé par l'utilisateur (Ctrl+C)")
-        except Exception as e:
-            logger.critical("Erreur fatale dans la boucle principale : %s", e, exc_info=True)
-            raise
-        finally:
-            self._shutdown()
-
-    def _shutdown(self):
-        """Fermeture propre des connexions Kafka."""
-        logger.info("Fermeture des connexions Kafka...")
-        try:
-            self.producer.flush(timeout=10)  # Vider le buffer producer
-            self.consumer.close()
-            logger.info("Connexions fermées proprement.")
-        except Exception as e:
-            logger.error("Erreur lors de la fermeture : %s", e)
-
-        # Afficher les métriques finales
-        final_metrics = self.parser.get_metrics()
-        logger.info("📊 Métriques finales : %s", json.dumps(final_metrics, indent=2))
+        def _shutdown(self):
+            """Fermeture propre."""
+            logger.info("Fermeture des connexions Kafka...")
+            try:
+                self.producer.flush(timeout=10)
+                self.consumer.close()
+            except Exception as e:
+                logger.error(f"Erreur fermeture : {e}")
 
 
 # =============================================================================
@@ -679,9 +536,13 @@ class KafkaISO8583Worker:
 # =============================================================================
 if __name__ == "__main__":
     logger.info("=" * 70)
-    logger.info("  Al Barid Bank — ISO 8583 Universal Parser")
-    logger.info("  Plateforme MLOps Détection de Fraude — v1.0.0")
+    logger.info("  Al Barid Bank — ISO 8583 Universal Parser v1.0.0")
+    logger.info("  Compatible pyiso8583 3.0.0")
     logger.info("=" * 70)
 
-    worker = KafkaISO8583Worker()
-    worker.run()
+    if KAFKA_AVAILABLE:
+        worker = KafkaISO8583Worker()
+        worker.run()
+    else:
+        logger.warning("⚠️  Mode Kafka désactivé. Installer : pip install confluent-kafka")
+        logger.info("✓ Parser initialisé. Prêt pour des tests locaux.")
