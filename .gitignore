@@ -13,3 +13,6 @@ __pycache__/
 # IDE (VS Code / PyCharm)
 .vscode/
 .idea/
+
+# Logs de transactions
+*.log
