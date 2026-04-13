@@ -35,7 +35,7 @@ from datetime import datetime
 from confluent_kafka import Consumer, Producer, KafkaError, KafkaException
 
 # Import du Smart Parser
-from iso8583_parser import (
+from iso8583_smart_parser import (
     detect_spec,
     parse_iso_to_dict,
     get_spec_info,
