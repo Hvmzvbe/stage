@@ -50,7 +50,7 @@ TOPIC_RAW = "raw_stream"
 #  Ajoute / modifie / supprime des trames ici.
 #  Chaque entrée :
 #    - "label" : description (pour le log)
-#    - "hex"   : trame brute en hexadécimal
+#    - "hex"  : trame brute en hexadécimal
 # ===========================================================================
 
 FRAMES_HEX = [

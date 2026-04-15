@@ -29,17 +29,13 @@ import json
 import logging
 import os
 import signal
-import sys
 from datetime import datetime
 
 from confluent_kafka import Consumer, Producer, KafkaError, KafkaException
 
 # Import du Smart Parser
 from iso8583_smart_parser import (
-    detect_spec,
     parse_iso_to_dict,
-    get_spec_info,
-    SPEC_REGISTRY,
 )
 import iso8583
 
@@ -56,7 +52,7 @@ logger = logging.getLogger("kafka_consumer")
 # Configuration par défaut
 # ---------------------------------------------------------------------------
 CONSUMER_CONFIG = {
-    "bootstrap.servers": "localhost:9092",
+    "bootstrap.servers": "127.0.0.1:9092",
     "group.id": "iso8583-parser-group",
     "auto.offset.reset": "earliest",
     "enable.auto.commit": True,
@@ -64,7 +60,7 @@ CONSUMER_CONFIG = {
 }
 
 PRODUCER_CONFIG = {
-    "bootstrap.servers": "localhost:9092",
+    "bootstrap.servers": "127.0.0.1:9092",
     "client.id": "iso8583-parser-producer",
 }
 
@@ -372,43 +368,43 @@ def run_consumer(
 #  CLI
 # ===========================================================================
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="Consumer Kafka — ISO 8583 Smart Parser + File Logger"
-    )
-    parser.add_argument(
-        "--bootstrap", default="localhost:9092",
-        help="Kafka bootstrap servers (default: localhost:9092)"
-    )
-    parser.add_argument(
-        "--group-id", default="iso8583-parser-group",
-        help="Consumer group ID"
-    )
-    parser.add_argument(
-        "--topic-in", default=TOPIC_RAW,
-        help=f"Topic entree (default: {TOPIC_RAW})"
-    )
-    parser.add_argument(
-        "--log-file", default=DEFAULT_LOG_FILE,
-        help=f"Fichier de sortie JSON (default: {DEFAULT_LOG_FILE})"
-    )
-
-    args = parser.parse_args()
-
-    c_config = {
-        "bootstrap.servers": args.bootstrap,
-        "group.id": args.group_id,
-        "auto.offset.reset": "earliest",
-        "enable.auto.commit": True,
-    }
-    p_config = {
-        "bootstrap.servers": args.bootstrap,
-        "client.id": "iso8583-parser-producer",
-    }
-
-    run_consumer(
-        consumer_config=c_config,
-        producer_config=p_config,
-        topic_in=args.topic_in,
-        log_file=args.log_file,
-    )
+# if __name__ == "__main__":
+#     parser = argparse.ArgumentParser(
+#         description="Consumer Kafka — ISO 8583 Smart Parser + File Logger"
+#     )
+#     parser.add_argument(
+#         "--bootstrap", default="127.0.0.1:9092",
+#         help="Kafka bootstrap servers (default: 127.0.0.1:9092)"
+#     )
+#     parser.add_argument(
+#         "--group-id", default="iso8583-parser-group",
+#         help="Consumer group ID"
+#     )
+#     parser.add_argument(
+#         "--topic-in", default=TOPIC_RAW,
+#         help=f"Topic entree (default: {TOPIC_RAW})"
+#     )
+#     parser.add_argument(
+#         "--log-file", default=DEFAULT_LOG_FILE,
+#         help=f"Fichier de sortie JSON (default: {DEFAULT_LOG_FILE})"
+#     )
+#
+#     args = parser.parse_args()
+#
+#     c_config = {
+#         "bootstrap.servers": args.bootstrap,
+#         "group.id": args.group_id,
+#         "auto.offset.reset": "earliest",
+#         "enable.auto.commit": True,
+#     }
+#     p_config = {
+#         "bootstrap.servers": args.bootstrap,
+#         "client.id": "iso8583-parser-producer",
+#     }
+#
+#     run_consumer(
+#         consumer_config=c_config,
+#         producer_config=p_config,
+#         topic_in=args.topic_in,
+#         log_file=args.log_file,
+#     )
