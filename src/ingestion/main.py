@@ -59,7 +59,7 @@ from confluent_kafka import Consumer, Producer, KafkaError, KafkaException
 
 # ── Imports internes (MÊME DOSSIER) ──
 from iso8583_smart_parser import parse_iso_to_dict
-from kafka.kafka_consumer import enrich_parsed_data
+# from kafka.kafka_consumer import enrich_parsed_data
 from kafka.kafka_producer import FRAMES_HEX
 from transaction_validator import (
     TransactionValidator,
@@ -212,7 +212,7 @@ class CuratedWriter:
         self.producer = producer
         self.topic = topic
         self.batch_size = batch_size
-        self._buffer: list[dict] = []
+        self._buffer: list[dict] = []    #accumule les messages avant écriture Parquet batch_size → flush_parquet()
         self.count = 0
         self.parquet_files: list[str] = []
 
@@ -344,6 +344,56 @@ class Metrics:
         print("=" * 70)
 
 
+def enrich_parsed_data(parsed: dict) -> dict:
+        """
+        Enrichit le JSON parsé avec des champs dérivés :
+        _parsed_at, _amount_mad, _is_atm_withdrawal, _is_ecommerce,
+        _channel, _city, _country, _is_international
+        """
+        enriched = parsed.copy()
+
+        enriched["_parsed_at"] = datetime.now().isoformat()
+
+        raw_amount = parsed.get("amount_transaction")
+        if raw_amount and raw_amount.isdigit():
+            enriched["_amount_mad"] = int(raw_amount) / 100.0
+        else:
+            enriched["_amount_mad"] = None
+
+        proc_code = parsed.get("processing_code", "")
+        enriched["_is_atm_withdrawal"] = proc_code[:2] == "01"
+
+        pos_condition = parsed.get("pos_condition_code", "")
+        pos_entry = parsed.get("pos_entry_mode", "")
+        enriched["_is_ecommerce"] = pos_condition == "08" or pos_entry.startswith("81")
+
+        terminal_id = parsed.get("terminal_id", "")
+        if terminal_id.startswith("GAB"):
+            enriched["_channel"] = "GAB"
+        elif terminal_id.startswith("TPE"):
+            enriched["_channel"] = "TPE"
+        elif terminal_id.startswith("ECOM"):
+            enriched["_channel"] = "ECOM"
+        else:
+            enriched["_channel"] = "OTHER"
+
+        location = parsed.get("card_acceptor_name_location", "")
+        if len(location) >= 40:
+            enriched["_city"] = location[25:38].strip()
+            enriched["_country"] = location[38:40].strip()
+        elif len(location) > 2:
+            enriched["_city"] = "UNKNOWN"
+            enriched["_country"] = location[-2:].strip()
+        else:
+            enriched["_city"] = None
+            enriched["_country"] = None
+
+        enriched["_is_international"] = (
+                enriched["_country"] is not None and enriched["_country"] != "MA"
+        )
+
+        return enriched
+
 # ===========================================================================
 #  CŒUR DU PIPELINE — Traitement d'un message
 # ===========================================================================
@@ -447,6 +497,8 @@ def process_frame(
             "; ".join(e.rule for e in result.errors),
         )
         return False
+
+
 
     # ── CLEAN → Enrichissement + Curated Zone ──
     enriched = enrich_parsed_data(parsed)

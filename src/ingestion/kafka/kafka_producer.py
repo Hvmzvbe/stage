@@ -38,7 +38,7 @@ logger = logging.getLogger("kafka_producer")
 # ---------------------------------------------------------------------------
 KAFKA_CONFIG = {
     "bootstrap.servers": "127.0.0.1:9092",
-    "client.id": "switch-monetique-simulator",
+    "client.id": "switch-monetique",
 }
 
 TOPIC_RAW = "raw_stream"

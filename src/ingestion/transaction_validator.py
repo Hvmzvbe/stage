@@ -1,39 +1,3 @@
-"""
-===========================================================================
-Module : transaction_validator.py
-Projet : Plateforme MLOps - Détection de Fraude (Al Barid Bank)
-Auteur : Hamza (PFE EMSI 2025-2026)
----------------------------------------------------------------------------
-Rôle   : Validateur Quality Check — 3 couches de validation sur chaque
-         trame parsée (JSON dict) issue du Smart Parser ISO 8583.
-
-         Couche 1 — Conformité Structurelle (Protocole ISO 8583)
-         Couche 2 — Validité Monétique (Règles métier Al Barid Bank)
-         Couche 3 — Intégrité ML (Data Quality pour le Feature Engineering)
-
-         Sortie :
-           ✅ CLEAN  → Curated Zone (Parquet) — prêt pour Spark / ML
-           ❌ REJECT → Quarantine Zone (HDFS raw) + alerte système
-
-         Le validateur agit **par trame** (streaming, pas de batch).
-         Il est conçu pour s'intégrer dans le Consumer Kafka existant.
-
-Usage  :
-    from transaction_validator import TransactionValidator
-
-    validator = TransactionValidator()
-    result = validator.validate(parsed_dict)
-
-    if result.is_valid:
-        # → Curated Zone
-    else:
-        # → Quarantine Zone + Alert
-        print(result.errors)
-
-Requires : (stdlib uniquement — aucune dépendance externe)
-===========================================================================
-"""
-
 import logging
 import re
 from dataclasses import dataclass, field
@@ -63,9 +27,8 @@ class ValidationLayer(Enum):
 
 
 class Severity(Enum):
-    """Gravité de l'erreur de validation."""
-    ERROR   = "ERROR"    # Bloquant — trame rejetée
-    WARNING = "WARNING"  # Non-bloquant — trame acceptée avec flag
+    ERROR   = "ERROR"
+    WARNING = "WARNING"
 
 
 @dataclass
@@ -220,7 +183,7 @@ ML_CRITICAL_FIELDS = {
 }
 
 # ── Montant max raisonnable (en centimes) — 500 000 MAD ──
-MAX_AMOUNT_CENTIMES = 50_000_000
+MAX_AMOUNT_CENTIMES = 500_000_000
 
 # ── Tolérance horodatage (heures) ──
 TIMESTAMP_FUTURE_TOLERANCE_HOURS = 1
@@ -235,7 +198,7 @@ PAN_MIN_LENGTH = 13
 PAN_MAX_LENGTH = 19
 
 # ── BIN (6 premiers digits du PAN) — Préfixes Al Barid Bank connus ──
-# Adapte cette liste selon les BINs réels de la banque
+
 KNOWN_BIN_PREFIXES = {
     "414733",  # BIN simulé Al Barid Bank (d'après tes trames)
 }
@@ -434,7 +397,6 @@ class BusinessValidator:
     """
 
     def validate(self, data: dict, result: ValidationResult) -> None:
-        """Exécute toutes les règles métier."""
         self._check_luhn(data, result)
         self._check_currency_code(data, result)
         self._check_mti_supported(data, result)
@@ -684,7 +646,7 @@ class BusinessValidator:
 class MLQualityValidator:
     """
     Vérifie que la trame contient les données nécessaires au Feature
-    Engineering et au scoring ML. Garbage In, Garbage Out.
+    Engineering et au scoring ML.
 
     Règles :
       3.1  Présence des features critiques pour les 3 types d'anomalies
@@ -828,24 +790,24 @@ class MLQualityValidator:
                 value=dt_str,
             ))
 
-    # ── 3.3 PAN — BIN Extractible ──
-    def _check_pan_bin_extractable(self, data: dict, result: ValidationResult) -> None:
-        pan = data.get("pan")
-        if pan is None or not isinstance(pan, str):
-            return
-
-        if len(pan) < 6:
-            result.add_error(ValidationError(
-                layer=ValidationLayer.ML_QUALITY,
-                severity=Severity.ERROR,
-                field="pan",
-                rule="PAN_BIN_EXTRACT",
-                message=(
-                    "PAN trop court pour extraire le BIN (6 premiers digits). "
-                    f"Longueur reçue : {len(pan)}."
-                ),
-                value=f"{pan[:4]}...",
-            ))
+    # # ── 3.3 PAN — BIN Extractible ──
+    # def _check_pan_bin_extractable(self, data: dict, result: ValidationResult) -> None:
+    #     pan = data.get("pan")
+    #     if pan is None or not isinstance(pan, str):
+    #         return
+    #
+    #     if len(pan) < 6:
+    #         result.add_error(ValidationError(
+    #             layer=ValidationLayer.ML_QUALITY,
+    #             severity=Severity.ERROR,
+    #             field="pan",
+    #             rule="PAN_BIN_EXTRACT",
+    #             message=(
+    #                 "PAN trop court pour extraire le BIN (6 premiers digits). "
+    #                 f"Longueur reçue : {len(pan)}."
+    #             ),
+    #             value=f"{pan[:4]}...",
+    #         ))
 
     # ── 3.4 DE 43 Parsable (ville + pays) ──
     def _check_de43_parsable(self, data: dict, result: ValidationResult) -> None:
