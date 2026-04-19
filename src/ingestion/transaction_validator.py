@@ -790,24 +790,24 @@ class MLQualityValidator:
                 value=dt_str,
             ))
 
-    # # ── 3.3 PAN — BIN Extractible ──
-    # def _check_pan_bin_extractable(self, data: dict, result: ValidationResult) -> None:
-    #     pan = data.get("pan")
-    #     if pan is None or not isinstance(pan, str):
-    #         return
-    #
-    #     if len(pan) < 6:
-    #         result.add_error(ValidationError(
-    #             layer=ValidationLayer.ML_QUALITY,
-    #             severity=Severity.ERROR,
-    #             field="pan",
-    #             rule="PAN_BIN_EXTRACT",
-    #             message=(
-    #                 "PAN trop court pour extraire le BIN (6 premiers digits). "
-    #                 f"Longueur reçue : {len(pan)}."
-    #             ),
-    #             value=f"{pan[:4]}...",
-    #         ))
+    # ── 3.3 PAN — BIN Extractible ──
+    def _check_pan_bin_extractable(self, data: dict, result: ValidationResult) -> None:
+        pan = data.get("pan")
+        if pan is None or not isinstance(pan, str):
+            return
+
+        if len(pan) < 6:
+            result.add_error(ValidationError(
+                layer=ValidationLayer.ML_QUALITY,
+                severity=Severity.ERROR,
+                field="pan",
+                rule="PAN_BIN_EXTRACT",
+                message=(
+                    "PAN trop court pour extraire le BIN (6 premiers digits). "
+                    f"Longueur reçue : {len(pan)}."
+                ),
+                value=f"{pan[:4]}...",
+            ))
 
     # ── 3.4 DE 43 Parsable (ville + pays) ──
     def _check_de43_parsable(self, data: dict, result: ValidationResult) -> None:

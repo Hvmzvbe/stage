@@ -158,7 +158,7 @@ def enrich_parsed_data(parsed: dict) -> dict:
 
     location = parsed.get("card_acceptor_name_location", "")
     if len(location) >= 40:
-        enriched["_city"] = location[25:38].strip()
+        enriched["_city"] = location[24:38].strip()
         enriched["_country"] = location[38:40].strip()
     elif len(location) > 2:
         enriched["_city"] = "UNKNOWN"

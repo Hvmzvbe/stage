@@ -1,0 +1,28 @@
+# ===========================================================================
+# Dockerfile.notification — Consumer Alertes (Al Barid Bank)
+# ===========================================================================
+
+FROM python:3.11-slim
+
+LABEL maintainer="Hamza — PFE EMSI 2025-2026"
+LABEL component="kafka-notification"
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc librdkafka-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir -r requirements.txt
+
+COPY src/ingestion/kafka/kafka_notification.py /app/
+
+RUN mkdir -p /app/data/notification_logs
+
+ENTRYPOINT ["python", "kafka_notification.py"]
+CMD ["--bootstrap", "kafka:9092"]

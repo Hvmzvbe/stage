@@ -1,0 +1,15 @@
+# ===========================================================================
+# requirements.txt — Ingestion Pipeline (Al Barid Bank)
+# ===========================================================================
+
+# ISO 8583 parsing
+pyiso8583>=4.0.1
+
+# Kafka client (Confluent — production-grade)
+confluent-kafka>=2.3.0
+
+# Parquet file writing
+pyarrow>=14.0.0
+
+# Utilities
+python-dotenv>=1.0.1
